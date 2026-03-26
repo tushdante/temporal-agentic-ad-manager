@@ -1,0 +1,17 @@
+[project]
+name = "pinterest-ad-agent"
+version = "0.2.0"
+description = "Temporal-based autonomous ad campaign agent using generic agentic framework"
+requires-python = ">=3.10"
+dependencies = [
+    "temporalio>=1.9.0",
+    "anthropic>=0.40.0",
+    "python-dotenv>=1.0.0",
+]
+
+[tool.setuptools]
+packages = ["agent", "pinterest", "pinterest.tools"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
