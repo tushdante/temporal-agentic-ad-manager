@@ -6,39 +6,37 @@ The architecture separates the **generic agentic loop** from **domain-specific t
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Temporal Worker                           │
-│                                                                  │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │              AgentWorkflow (generic)                        │ │
-│  │                                                             │ │
-│  │  ┌──────────┐    ┌───────────┐    ┌──────────────────────┐ │ │
-│  │  │  Wait for │───>│ LLM       │───>│ Execute Tool         │ │ │
-│  │  │  Prompt   │    │ Planner   │    │ (Dynamic Activity)   │ │ │
-│  │  │ (Signal)  │<───│ Activity  │<───│                      │ │ │
-│  │  └──────────┘    └───────────┘    └──────────────────────┘ │ │
-│  │       ↑                                    │               │ │
-│  │       │  follow_up_prompt (auto-scheduled) │               │ │
-│  │       └────────────────────────────────────┘               │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────────┐│
-│  │  Tool Registry (tools/)                                      ││
-│  │  ┌────────────┐ ┌──────────┐ ┌────────────┐ ┌────────────┐ ││
-│  │  │create_     │ │pull_     │ │update_     │ │generate_   │ ││
-│  │  │campaign    │ │analytics │ │budget      │ │creatives   │ ││
-│  │  └────────────┘ └──────────┘ └────────────┘ └────────────┘ ││
-│  │  ┌────────────┐ ┌──────────┐ ┌────────────┐ ┌────────────┐ ││
-│  │  │create_     │ │check_    │ │update_     │ │send_       │ ││
-│  │  │ad_group    │ │review    │ │ad_status   │ │notification│ ││
-│  │  └────────────┘ └──────────┘ └────────────┘ └────────────┘ ││
-│  │  ┌────────────┐ ┌──────────┐ ┌────────────┐                ││
-│  │  │create_pin  │ │create_ad │ │update_     │                ││
-│  │  │            │ │          │ │targeting   │                ││
-│  │  └────────────┘ └──────────┘ └────────────┘                ││
-│  └──────────────────────────────────────────────────────────────┘│
-└──────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph Worker["Temporal Worker"]
+        subgraph Loop["AgentWorkflow (generic agentic loop)"]
+            A["Wait for Prompt<br/><i>Signal / Timer</i>"] --> B["LLM Planner<br/><i>Activity</i>"]
+            B --> C{"tool_use<br/>or done?"}
+            C -->|tool_use| D["HITL Gate<br/><i>Signal: confirm / deny</i>"]
+            D --> E["Execute Tool<br/><i>Dynamic Activity</i>"]
+            E --> B
+            C -->|done| F["Cycle Summary"]
+            F -->|follow_up_prompt| A
+        end
+
+        subgraph Tools["Tool Registry — pinterest/tools/"]
+            T1["create_campaign"] ~~~ T2["pull_analytics"] ~~~ T3["update_budget"] ~~~ T4["generate_creatives"]
+            T5["create_ad_group"] ~~~ T6["check_review_status"] ~~~ T7["update_ad_status"] ~~~ T8["send_notification"]
+            T9["create_pin"] ~~~ T10["create_ad"] ~~~ T11["suspend_ad_group"] ~~~ T12["adjust_bid_strategy"]
+        end
+
+        E -.->|"dispatched by name<br/>at runtime"| Tools
+    end
+
+    style Worker fill:#1E293B,stroke:#3B82F6,color:#F1F5F9
+    style Loop fill:#0F172A,stroke:#3B82F6,color:#F1F5F9
+    style Tools fill:#0F172A,stroke:#22C55E,color:#F1F5F9
+    style A fill:#1E293B,stroke:#F59E0B,color:#F1F5F9
+    style B fill:#1E293B,stroke:#3B82F6,color:#F1F5F9
+    style C fill:#1E293B,stroke:#94A3B8,color:#F1F5F9
+    style D fill:#1E293B,stroke:#EF4444,color:#F1F5F9
+    style E fill:#1E293B,stroke:#22C55E,color:#F1F5F9
+    style F fill:#1E293B,stroke:#F59E0B,color:#F1F5F9
 ```
 
 ### Key Design Decisions
@@ -168,19 +166,27 @@ The demo script automatically:
 
 ### The Agentic Loop
 
-```
-1. WAIT for user prompt (Signal) or follow-up timer
-2. CALL LLM planner with goal, conversation history, and available tools
-3. Claude returns: tool_use | text (done)
-4. If tool_use:
-   a. Optionally wait for HITL confirmation (Signal)
-   b. Execute tool via Dynamic Activity (dispatched by name from registry)
-   c. Append result to conversation history
-   d. Go to step 2 (inner loop)
-5. If done:
-   a. If follow_up_prompt configured: sleep → enqueue follow-up → go to step 1
-   b. Else: return final result
-6. ContinueAsNew if history exceeds threshold
+```mermaid
+flowchart LR
+    A[Wait for Prompt] -->|Signal / Timer| B[LLM Planner]
+    B --> C{Response?}
+    C -->|tool_use| D{Side effects?}
+    D -->|yes| E[HITL: confirm / deny]
+    D -->|no| F[Execute Tool]
+    E -->|approved| F
+    E -->|denied| B
+    F --> G[Append to History]
+    G --> B
+    C -->|done| H{Follow-up?}
+    H -->|yes| I[Sleep interval]
+    I --> A
+    H -->|no| J[Return Result]
+
+    style A fill:#F59E0B,color:#000
+    style B fill:#3B82F6,color:#FFF
+    style E fill:#EF4444,color:#FFF
+    style F fill:#22C55E,color:#FFF
+    style J fill:#8B5CF6,color:#FFF
 ```
 
 ### Campaign Lifecycle
