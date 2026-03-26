@@ -84,17 +84,8 @@ graph TD
 ## Prerequisites
 
 - **Python 3.10+**
-- **Temporal Server** — local dev server or Temporal Cloud
+- **Temporal Cloud** namespace with API key authentication
 - **Anthropic API Key** — for Claude LLM calls
-
-### Install Temporal CLI
-
-```bash
-# macOS
-brew install temporal
-
-# Or download from https://temporal.io/setup
-```
 
 ### Install Dependencies
 
@@ -108,28 +99,23 @@ pip install -e .
 
 ```bash
 cp .env.example .env
-# Edit .env with your settings:
-#   TEMPORAL_ADDRESS=localhost:7233
-#   TEMPORAL_NAMESPACE=default
+# Edit .env with your Temporal Cloud and Anthropic settings:
+#   TEMPORAL_ADDRESS=your-namespace.tmprl.cloud:7233
+#   TEMPORAL_NAMESPACE=your-namespace
+#   TEMPORAL_API_KEY=your-temporal-api-key
 #   ANTHROPIC_API_KEY=sk-ant-...
 #   DEMO_MODE=true
 ```
 
 ## Quick Start
 
-### 1. Start Temporal Dev Server
-
-```bash
-temporal server start-dev
-```
-
-### 2. Start the Worker
+### 1. Start the Worker
 
 ```bash
 python3 worker.py
 ```
 
-### 3. Launch a Campaign
+### 2. Launch a Campaign
 
 ```bash
 # Default campaign
@@ -142,7 +128,7 @@ python3 starter.py --campaign "Summer Sale 2026" --budget 100 --max-budget 500
 DEMO_MODE=true python3 starter.py
 ```
 
-### 4. Follow the Agent in Real-Time
+### 3. Follow the Agent in Real-Time
 
 ```bash
 # Follow the default workflow (synchronous — shows tool calls, results, and HITL prompts)
@@ -282,10 +268,8 @@ The codebase is annotated with `TODO [Nexus-readiness]` comments showing where N
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `TEMPORAL_ADDRESS` | Yes | `localhost:7233` or `namespace.tmprl.cloud:7233` |
-| `TEMPORAL_NAMESPACE` | Yes | `default` or your Cloud namespace |
+| `TEMPORAL_ADDRESS` | Yes | `your-namespace.tmprl.cloud:7233` |
+| `TEMPORAL_NAMESPACE` | Yes | Your Temporal Cloud namespace |
+| `TEMPORAL_API_KEY` | Yes | Temporal Cloud API key |
 | `ANTHROPIC_API_KEY` | Yes | Claude API key |
-| `TEMPORAL_API_KEY` | No | For Temporal Cloud API key auth |
-| `TEMPORAL_TLS_CERT_PATH` | No | For mTLS auth |
-| `TEMPORAL_TLS_KEY_PATH` | No | For mTLS auth |
 | `DEMO_MODE` | No | `true` for 15-second evaluation intervals |

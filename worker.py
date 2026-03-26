@@ -9,10 +9,9 @@ Requires environment variables (see .env.example).
 
 import asyncio
 import os
-from pathlib import Path
 
 from dotenv import load_dotenv
-from temporalio.client import Client, TLSConfig
+from temporalio.client import Client
 from temporalio.worker import Worker
 
 from agent.activities import LLMActivities, dynamic_tool_activity
@@ -22,37 +21,18 @@ TASK_QUEUE = "pinterest-ad-agents"
 
 
 async def create_client() -> Client:
-    """Connect to Temporal using API key, mTLS, or local dev (no TLS)."""
+    """Connect to Temporal Cloud using API key authentication."""
     address = os.environ["TEMPORAL_ADDRESS"]
     namespace = os.environ["TEMPORAL_NAMESPACE"]
+    api_key = os.environ["TEMPORAL_API_KEY"]
 
-    tls_cert_path = os.environ.get("TEMPORAL_TLS_CERT_PATH")
-    tls_key_path = os.environ.get("TEMPORAL_TLS_KEY_PATH")
-    api_key = os.environ.get("TEMPORAL_API_KEY")
-
-    if api_key:
-        return await Client.connect(
-            address,
-            namespace=namespace,
-            rpc_metadata={"temporal-namespace": namespace},
-            api_key=api_key,
-            tls=True,
-        )
-    elif tls_cert_path and tls_key_path:
-        tls_config = TLSConfig(
-            client_cert=Path(tls_cert_path).read_bytes(),
-            client_private_key=Path(tls_key_path).read_bytes(),
-        )
-        return await Client.connect(
-            address,
-            namespace=namespace,
-            tls=tls_config,
-        )
-    else:
-        return await Client.connect(
-            address,
-            namespace=namespace,
-        )
+    return await Client.connect(
+        address,
+        namespace=namespace,
+        rpc_metadata={"temporal-namespace": namespace},
+        api_key=api_key,
+        tls=True,
+    )
 
 
 async def main():
