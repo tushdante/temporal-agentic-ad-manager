@@ -29,5 +29,8 @@ Thumbs.db
 # Temporal
 temporal-data/
 
+# Demo logs
+replay-demo/restate/log/
+
 # Generated presentations
 *.pptx

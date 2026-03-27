@@ -7,15 +7,27 @@ Default is 2.0 (v1). Set to 3.0 for v2.
 This simulates a real deploy where the same endpoint gets new code.
 """
 
+import logging
 import os
+import sys
 from datetime import timedelta
 
 import restate
 from restate import VirtualObject, ObjectContext
 
+# Log to stderr so it's always flushed (stdout is buffered by hypercorn)
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.INFO,
+    format="[%(asctime)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger("handler")
+
 budget_optimizer = VirtualObject("BudgetOptimizer")
 
 ROAS_THRESHOLD = float(os.environ.get("ROAS_THRESHOLD", "2.0"))
+HANDLER_VERSION = "v1" if ROAS_THRESHOLD <= 2.0 else "v2"
 
 SIMULATED_METRICS = [
     {"cycle": 1, "roas": 2.5, "spend": 45.00, "ctr": 0.012},
@@ -32,6 +44,8 @@ async def optimize(ctx: ObjectContext, max_cycles: int = 5) -> dict:
     decisions = []
     threshold = ROAS_THRESHOLD  # Captured at import time
 
+    log.info(f"[{HANDLER_VERSION}] Starting optimization: {max_cycles} cycles, threshold={threshold}")
+
     for cycle in range(max_cycles):
         metrics = await ctx.run(
             f"check_metrics_{cycle}",
@@ -39,32 +53,36 @@ async def optimize(ctx: ObjectContext, max_cycles: int = 5) -> dict:
         )
 
         roas = metrics["roas"]
+        log.info(f"[{HANDLER_VERSION}] [CYCLE {cycle + 1}] check_metrics → ROAS={roas}, threshold={threshold}")
 
-        if roas > threshold:
-            result = await ctx.run(
-                f"action_{cycle}",
-                lambda r=roas, t=threshold: {
+        # The ENTIRE decision — threshold check + action — is inside one
+        # ctx.run so it gets journaled atomically. On replay, Restate
+        # returns the journaled result (which used v1's threshold), making
+        # the drift between v1 and v2 visible in the output.
+        def make_decision(r=roas, t=threshold, c=cycle):
+            if r > t:
+                return {
                     "action": "budget_increased",
                     "roas": r,
-                    "threshold": t,
+                    "threshold_used": t,
+                    "decision": f"cycle {c + 1}: ROAS={r} > {t} → INCREASED (threshold={t})",
                 }
-            )
-            decisions.append(f"cycle {cycle + 1}: ROAS={roas} > {threshold} → INCREASED (threshold={threshold})")
-        else:
-            result = await ctx.run(
-                f"action_{cycle}",
-                lambda r=roas, t=threshold: {
+            else:
+                return {
                     "action": "hold_steady",
                     "roas": r,
-                    "threshold": t,
+                    "threshold_used": t,
+                    "decision": f"cycle {c + 1}: ROAS={r} <= {t} → held steady (threshold={t})",
                 }
-            )
-            decisions.append(f"cycle {cycle + 1}: ROAS={roas} <= {threshold} → held steady (threshold={threshold})")
+
+        result = await ctx.run(f"decide_and_act_{cycle}", make_decision)
+        log.info(f"[{HANDLER_VERSION}] [DECIDED] {result['decision']}")
+        decisions.append(result["decision"])
 
         if cycle < max_cycles - 1:
             await ctx.sleep(delta=timedelta(seconds=10))
 
-    return {"decisions": decisions, "threshold": threshold}
+    return {"decisions": decisions, "threshold_at_completion": threshold}
 
 
 app = restate.app(services=[budget_optimizer])
@@ -75,7 +93,7 @@ if __name__ == "__main__":
 
     config = hypercorn.config.Config()
     config.bind = ["0.0.0.0:9080"]
-    print(f"Restate handler (threshold={ROAS_THRESHOLD}) listening on :9080")
+    log.info(f"[{HANDLER_VERSION}] Restate handler (threshold={ROAS_THRESHOLD}) listening on :9080")
 
     import asyncio
     asyncio.run(hypercorn.asyncio.serve(app, config))

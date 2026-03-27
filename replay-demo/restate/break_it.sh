@@ -21,6 +21,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
+mkdir -p log
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -32,7 +33,7 @@ cleanup() {
     echo ""
     echo -e "${CYAN}Cleaning up...${NC}"
     kill "$H_PID" 2>/dev/null || true
-    docker stop restate-demo 2>/dev/null || true
+    # docker stop restate-demo 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -51,9 +52,15 @@ sleep 4
 echo -e "  Restate server ready."
 echo
 
+# Kill any leftover handler on port 9080
+lsof -ti:9080 | xargs kill -9 2>/dev/null || true
+sleep 1
+
 # Step 2: Start v1 handler (threshold=2.0)
 echo -e "${GREEN}[Step 2]${NC} Starting handler with VERSION 1 (threshold=2.0)..."
-ROAS_THRESHOLD=2.0 python3 handler.py > /tmp/restate-handler.log 2>&1 &
+# Clear log from previous runs
+> log/handler.log
+ROAS_THRESHOLD=2.0 python3 handler.py >> log/handler.log 2>&1 &
 H_PID=$!
 sleep 3
 echo -e "  Handler PID: ${H_PID}"
@@ -74,10 +81,13 @@ INV_ID=$(echo "$INVOCATION" | python3 -c "import sys,json; print(json.load(sys.s
 echo -e "  Invocation ID: ${INV_ID}"
 echo
 
-# Step 5: Wait for cycle 1
+# Step 5: Wait for cycle 1 and capture v1 handler logs
 echo -e "${YELLOW}[Step 5]${NC} Waiting 15s for cycle 1 to complete..."
-echo -e "  (cycle 1: ROAS=2.5 > 2.0 → increase_budget journaled under v1)"
+echo -e "  (cycle 1: ROAS=2.5 > 2.0 → increase_budget under v1)"
 sleep 15
+echo
+echo -e "${GREEN}  v1 handler log (what ACTUALLY happened):${NC}"
+grep -E "\[v1\].*\[DECIDED\]|\[v1\].*\[CYCLE" log/handler.log 2>/dev/null || echo "  (no v1 decision events yet — check log/handler.log)"
 echo
 
 # Step 6: Kill v1 handler
@@ -91,10 +101,11 @@ echo
 # Step 7: Start v2 handler (same endpoint, new threshold)
 echo -e "${GREEN}[Step 7]${NC} Starting handler with VERSION 2 (threshold=3.0)..."
 echo -e "  ${YELLOW}The threshold changed: 2.0 → 3.0${NC}"
-echo -e "  ${YELLOW}ROAS=2.5 was journaled as increase_budget under v1${NC}"
-echo -e "  ${YELLOW}Restate replays journal entries without re-evaluating...${NC}"
+echo -e "  ${YELLOW}Under v1, ROAS=2.5 > 2.0 triggered budget_increased${NC}"
+echo -e "  ${YELLOW}Under v2, ROAS=2.5 <= 3.0 would NOT trigger it${NC}"
+echo -e "  ${YELLOW}But the budget was ALREADY increased in the real world${NC}"
 echo
-ROAS_THRESHOLD=3.0 python3 handler.py > /tmp/restate-handler-v2.log 2>&1 &
+ROAS_THRESHOLD=3.0 python3 handler.py >> log/handler.log 2>&1 &
 H_PID=$!
 sleep 3
 echo -e "  v2 handler PID: ${H_PID}"
@@ -115,12 +126,17 @@ import sys, json
 data = json.loads(sys.stdin.read())
 for d in data.get('decisions', []):
     print(f'  {d}')
-print(f'  threshold at completion: {data.get(\"threshold\")}')
+print(f'  threshold at completion: {data.get(\"threshold_at_completion\")}')
 "
         echo ""
-        echo -e "${RED}  No error. No warning. Mixed v1/v2 decisions.${NC}"
-        echo -e "${RED}  Restate completed with silent drift.${NC}"
+        echo -e "${RED}  DRIFT: v1 executed budget_increased for cycle 1 (ROAS=2.5 > 2.0)${NC}"
+        echo -e "${RED}  But v2 re-evaluated and recorded hold_steady (ROAS=2.5 <= 3.0)${NC}"
+        echo -e "${RED}  The budget increase HAPPENED but the record says it didn't.${NC}"
+        echo -e "${RED}  No error. No warning. History rewritten.${NC}"
         echo -e "${RED}════════════════════════════════════════════════════════════${NC}"
+        echo ""
+        echo -e "${YELLOW}  Full handler log (v1 + v2 entries): log/handler.log${NC}"
+        echo -e "${YELLOW}  Compare [v1] entries with [v2] entries — the audit trail is wrong.${NC}"
         break
     elif echo "$RESULT" | grep -q '"message".*not completed'; then
         echo "  Still running... ($i/20)"

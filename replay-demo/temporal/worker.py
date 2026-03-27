@@ -20,18 +20,24 @@ TASK_QUEUE = "replay-demo"
 
 
 async def create_client() -> Client:
-    """Connect to Temporal Cloud using API key authentication."""
-    address = os.environ["TEMPORAL_ADDRESS"]
-    namespace = os.environ["TEMPORAL_NAMESPACE"]
-    api_key = os.environ["TEMPORAL_API_KEY"]
+    """Connect to Temporal Cloud (API key) or local dev server (no auth)."""
+    address = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+    namespace = os.environ.get("TEMPORAL_NAMESPACE", "default")
+    api_key = os.environ.get("TEMPORAL_API_KEY")
 
-    return await Client.connect(
-        address,
-        namespace=namespace,
-        rpc_metadata={"temporal-namespace": namespace},
-        api_key=api_key,
-        tls=True,
-    )
+    if api_key:
+        return await Client.connect(
+            address,
+            namespace=namespace,
+            rpc_metadata={"temporal-namespace": namespace},
+            api_key=api_key,
+            tls=True,
+        )
+    else:
+        return await Client.connect(
+            address,
+            namespace=namespace,
+        )
 
 
 async def main():
