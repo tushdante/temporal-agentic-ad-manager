@@ -18,12 +18,12 @@ The workflow starts under v1, completes cycle 1 (budget increased), then the ser
 ### Temporal: NonDeterminismError
 
 ```
-Cycle 1 (v1): check_metrics → ROAS=2.5 → increase_budget ✓  (recorded in event history)
+Cycle 1 (v1): check_metrics → ROAS=2.5 → increase_budget    (recorded in event history)
 --- Worker restarts with v2 ---
 Temporal replays CODE through event history:
   v2 code says: ROAS=2.5 < 3.0 → should call hold_steady
   Event history says: increase_budget was called
-  MISMATCH → NonDeterminismError ✗
+  MISMATCH → NonDeterminismError
 ```
 
 Temporal replays by **re-executing the workflow code** against the event history. When the code path diverges from what was recorded, it halts immediately with a clear error identifying the exact divergence point.
@@ -41,12 +41,56 @@ Restate replays JOURNAL:
 Cycle 2 (v2): check_metrics → ROAS=1.8 < 3.0 → hold_steady  (new, v2 logic)
 Cycle 3 (v2): check_metrics → ROAS=3.2 > 3.0 → increase_budget  (new, v2 logic)
 ...
-Execution completes "successfully" ✓  (but with mixed v1/v2 decisions)
+Execution completes "successfully"    (but with mixed v1/v2 decisions)
 ```
 
 Restate replays by **returning journaled results** for completed steps. The new code is never evaluated for those steps. There is no comparison between what the old code did and what the new code would do.
 
 **The workflow drifted silently.** Cycle 1 used a 2.0 threshold, cycles 2-5 used a 3.0 threshold. No error, no warning.
+
+## Event-by-Event Comparison
+
+| # | Event | Temporal | Restate |
+|---|-------|----------|---------|
+| 1 | **Start workflow/invocation** | Workflow started on v1 worker (threshold=2.0) | Handler invoked on v1 deployment (threshold=2.0) |
+| 2 | **Cycle 1: check_metrics** | `ActivityScheduled: check_metrics` → returns `{roas: 2.5}` | `ctx.run("check_metrics_0")` → returns `{roas: 2.5}` — journaled |
+| 3 | **Cycle 1: decision (ROAS=2.5)** | v1 code: `2.5 > 2.0` → true → schedule `increase_budget` | v1 code: `2.5 > 2.0` → true → run `action_0` |
+| 4 | **Cycle 1: execute action** | `ActivityScheduled: increase_budget` → `ActivityCompleted` | `ctx.run("action_0")` → `{action: "budget_increased"}` — journaled |
+| 5 | **Cycle 1: sleep** | `TimerStarted` (10s) | `ctx.sleep(10s)` — journaled |
+| 6 | **Worker/handler killed** | v1 worker process terminated | v1 handler process terminated |
+| 7 | **New code deployed** | v2 worker starts (threshold=3.0) | v2 handler starts (threshold=3.0) |
+| 8 | **Replay begins** | Temporal replays event history through v2 code | Restate replays journal, returns stored results |
+| 9 | **Replay: check_metrics** | v2 code re-executes → sees `check_metrics` in history — match | Journal returns stored `{roas: 2.5}` — no code re-evaluation |
+| 10 | **Replay: decision (ROAS=2.5)** | v2 code: `2.5 > 3.0` → **false** → would schedule `hold_steady` | v2 code: `2.5 > 3.0` → false → takes `hold_steady` branch |
+| 11 | **Replay: execute action** | History says `increase_budget` but code says `hold_steady` | Journal returns stored `action_0` result from v1 — **no mismatch check** |
+| 12 | **>>> DIVERGENCE POINT** | **`NonDeterminismError`**: activity type `increase_budget` ≠ `hold_steady` | No error — journal result accepted regardless of current code path |
+| 13 | **Cycle 2** | **Workflow halted.** No further execution. | Continues under v2: ROAS=1.8 ≤ 3.0 → held steady |
+| 14 | **Cycle 3** | Halted | v2: ROAS=3.2 > 3.0 → increased budget |
+| 15 | **Cycle 4** | Halted | v2: ROAS=2.7 ≤ 3.0 → held steady |
+| 16 | **Cycle 5** | Halted | v2: ROAS=0.9 ≤ 3.0 → held steady |
+| 17 | **Final state** | **FAILED** — operator alerted, workflow preserved at divergence point | **"SUCCEEDED"** — mixed v1/v2 decisions, no alert |
+
+### Actual Output
+
+**Temporal** (from demo run):
+```
+WARN: Nondeterminism error: Activity type of scheduled event
+'increase_budget' does not match activity type of activity
+command 'hold_steady'
+```
+
+**Restate** (from demo run):
+```
+cycle 1: ROAS=2.5 <= 3.0 → held steady (threshold=3.0)   ← v2 re-evaluated v1's journaled step
+cycle 2: ROAS=1.8 <= 3.0 → held steady (threshold=3.0)
+cycle 3: ROAS=3.2 > 3.0  → INCREASED (threshold=3.0)
+cycle 4: ROAS=2.7 <= 3.0 → held steady (threshold=3.0)
+cycle 5: ROAS=0.9 <= 3.0 → held steady (threshold=3.0)
+
+Status: Completed successfully. No error.
+```
+
+> **Row 12 is the critical moment.** Temporal checks: "does the activity the code *wants* to call match the activity that *was* called?" Restate checks: "is there a journal entry with this name?" — and if so, returns it without validating whether the current code path is consistent with the original.
 
 ## Why This Matters for Pinterest
 

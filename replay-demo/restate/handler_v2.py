@@ -78,7 +78,8 @@ async def optimize(ctx: ObjectContext, max_cycles: int = 5) -> dict:
                 f"→ held steady (v2 logic)"
             )
 
-        await ctx.sleep(delta=10_000)
+        from datetime import timedelta
+        await ctx.sleep(delta=timedelta(seconds=10))
 
     return {"decisions": decisions, "version": "v2", "threshold": ROAS_THRESHOLD}
 
@@ -86,12 +87,14 @@ async def optimize(ctx: ObjectContext, max_cycles: int = 5) -> dict:
 app = restate.app(services=[budget_optimizer])
 
 if __name__ == "__main__":
+    import sys
     import hypercorn.asyncio
     import hypercorn.config
 
+    port = sys.argv[1] if len(sys.argv) > 1 else "9081"
     config = hypercorn.config.Config()
-    config.bind = ["0.0.0.0:9080"]
-    print(f"Restate handler v2 (threshold={ROAS_THRESHOLD}) listening on :9080")
+    config.bind = [f"0.0.0.0:{port}"]
+    print(f"Restate handler v2 (threshold={ROAS_THRESHOLD}) listening on :{port}")
 
     import asyncio
     asyncio.run(hypercorn.asyncio.serve(app, config))

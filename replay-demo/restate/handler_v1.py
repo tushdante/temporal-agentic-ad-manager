@@ -88,7 +88,8 @@ async def optimize(ctx: ObjectContext, max_cycles: int = 5) -> dict:
             )
 
         # Sleep between cycles — this is where the restart/swap happens
-        await ctx.sleep(delta=10_000)  # 10 seconds in milliseconds
+        from datetime import timedelta
+        await ctx.sleep(delta=timedelta(seconds=10))
 
     return {"decisions": decisions, "version": "v1", "threshold": ROAS_THRESHOLD}
 
