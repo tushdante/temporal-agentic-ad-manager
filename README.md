@@ -155,16 +155,18 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["Journal preserves v1 result
-    decide_and_act_0: budget_increased
-    threshold_used: 2.0"] --> B["v2 handler resumes
-    re-evaluates decide_and_act_0"]
-    B --> C{"v2 code evaluates
-    ROAS=2.5 > 3.0?"}
-    C -->|"false — returns hold_steady"| D["v2 returns hold_steady
-    to caller"]
-    D --> E["Journal has: budget_increased
-    Application reports: hold_steady"]
+    A["Journal (v1 results)
+    decide_and_act_0: budget_increased, threshold=2.0
+    decide_and_act_1: hold_steady, threshold=2.0
+    decide_and_act_2: budget_increased, threshold=2.0"] --> B["v2 handler resumes
+    replays journal for cycles 1-3"]
+    B --> C["Cycles 1-3: journal results
+    returned as-is (threshold=2.0)"]
+    C --> D["Cycles 4-5: new execution
+    decide_and_act_3, decide_and_act_4
+    run under v2 (threshold=3.0)"]
+    D --> E["Output mixes v1 and v2 thresholds
+    threshold_at_completion: 3.0"]
     E --> F["Silent success
     Drift UNDETECTED"]
 
